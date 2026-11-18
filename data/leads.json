@@ -1,0 +1,56 @@
+[
+  {
+    "id": "lead_daniel",
+    "first_name": "Daniel",
+    "last_name": "Carter",
+    "phone": "+15125550142",
+    "city": "Austin",
+    "state": "TX",
+    "zip": "78704",
+    "timezone": "America/Chicago",
+    "product": "home insurance",
+    "source": "the quote form on our website",
+    "consent": {
+      "given": true,
+      "method": "web form checkbox (express written consent to AI calls)",
+      "captured_at": "2026-11-18T14:02:00Z"
+    },
+    "notes": "Selected 'I own this home'. Left roof age and current carrier blank."
+  },
+  {
+    "id": "lead_no_name",
+    "first_name": "",
+    "last_name": "",
+    "phone": "+13055550199",
+    "city": "Miami",
+    "state": "FL",
+    "zip": "33133",
+    "timezone": "America/New_York",
+    "product": "home insurance",
+    "source": "the quote form on our website",
+    "consent": {
+      "given": true,
+      "method": "web form checkbox (express written consent to AI calls)",
+      "captured_at": "2026-11-18T13:40:00Z"
+    },
+    "notes": "Form submitted without a name. Use the safe fallback in the greeting."
+  },
+  {
+    "id": "lead_purchased_list",
+    "first_name": "Linda",
+    "last_name": "Moss",
+    "phone": "+16025550110",
+    "city": "Phoenix",
+    "state": "AZ",
+    "zip": "85016",
+    "timezone": "America/Phoenix",
+    "product": "home insurance",
+    "source": "a purchased lead list",
+    "consent": {
+      "given": false,
+      "method": "none on file",
+      "captured_at": null
+    },
+    "notes": "Bought list. No consent on file, so the pre-call gate must block it."
+  }
+]

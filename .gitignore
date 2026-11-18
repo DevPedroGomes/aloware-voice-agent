@@ -1,0 +1,11 @@
+.env
+.env.local
+data/runtime/
+console-recordings/
+__pycache__/
+.venv/
+.pytest_cache/
+node_modules/
+dist/
+.DS_Store
+*.tsbuildinfo
