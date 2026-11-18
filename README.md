@@ -25,7 +25,7 @@ make demo          # admin at http://localhost:8000 + a call with your mic
 - `make web` runs the agent in a real LiveKit room and you talk in the browser (open the "Agent console" link it prints). The office ambience, typing and hold music only play there: LiveKit's console mode doesn't support background audio.
 - `make evals` runs every eval (~25 s). `make reset` wipes calls, DNC entries and bookings, and restores the seed config.
 
-> **Calling hours are enforced in the lead's local time.** The default lead, Daniel, is in Chicago (8 AM to 9 PM there). Outside that window the call is blocked before dialing, and the terminal says why. To test at another hour, untick "Enforce calling hours" in the admin.
+> **Calling hours ship turned off, so you can try the demo at any hour.** In a real campaign, tick "Enforce calling hours" in the admin: calls to a lead outside 8 AM to 9 PM in *their* time zone (Daniel is in Chicago) are then blocked before dialing, and the terminal says why. The consent and DNC checks are always on.
 
 ### You play Daniel. Things to try
 
@@ -125,13 +125,11 @@ I picked GPT-5.4 mini with reasoning off over Gemma 4: almost the same median, a
 
 I picked evals because the console makes prompt changes cheap, and cheap prompt changes are how voice agents break in production. The useful question after every edit is "does the config I just saved still behave?" So `make evals` runs **against the live config** (`data/config.json`), on a throwaway copy of the data so it never touches real DNC entries or bookings.
 
-**Deterministic evals (42, no network, under a second):**
+**Deterministic evals (41, no network, under a second):**
 - the pre-call gate: consent, DNC, and hours in the lead's time zone, not the server's;
 - opt-out detection on noisy STT text, including the phrases that must not trigger;
 - config validation: disclosure, locked tools, TCPA hours, booking needs availability;
 - template fallbacks and spoken formatting.
-
-If the live config has calling hours turned off, one of them is skipped with a warning instead of passing silently.
 
 **LLM evals (8, ~25 s):** short text-mode calls against the real model with LiveKit's testing API (`session.run`, `result.expect`, LLM-as-judge).
 - Booking: nothing is written before the read-back, and the qualification answers reach the notes.

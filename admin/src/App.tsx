@@ -204,7 +204,7 @@ function AgentTab(props: {
             <span>
               Enforce calling hours in the lead's local time
               <br />
-              <span className="muted">Turn off only to demo outside US hours.</span>
+              <span className="muted">Off in this demo so it works at any hour. Turn on for real campaigns (TCPA: 8 AM to 9 PM, lead's local time).</span>
             </span>
           </label>
           <div className="row">

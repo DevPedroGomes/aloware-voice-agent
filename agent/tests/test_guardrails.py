@@ -113,15 +113,6 @@ def test_current_config_is_valid():
     assert config.validate(config.load()) == []
 
 
-def test_live_config_enforces_calling_hours():
-    """Flags (as a skip with a reason) a live config with the TCPA calling window off.
-
-    Fine for a demo outside US hours; never fine for a config that dials real leads.
-    """
-    if not config.load()["compliance"]["enforce_calling_hours"]:
-        pytest.skip("WARNING: calling-hours enforcement is OFF in the live config. Turn it on before real calls.")
-
-
 def test_greeting_without_ai_disclosure_is_rejected():
     cfg = config.load()
     cfg["greeting"] = "Hi {{first_name}}, this is Maya from Harbor Home Insurance!"

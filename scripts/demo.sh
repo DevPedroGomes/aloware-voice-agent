@@ -32,7 +32,26 @@ cd agent
 # `lk` picks its own default project unless LIVEKIT_* are in the environment.
 set -a; . ../.env; set +a
 # When a console session ends on its own, `lk` can leave the Python job behind.
-cleanup_jobs() { pkill -f "$PWD/.venv/bin/python3 -m livekit.agents console" 2>/dev/null || true; }
+# Only jobs started by this script are killed, never another running demo.
+job_pids() { pgrep -f "$PWD/.venv/bin/python3 -m livekit.agents console" 2>/dev/null || true; }
+BASELINE=" $(job_pids | tr '\n' ' ') "
+cleanup_jobs() {
+  for pid in $(job_pids); do
+    case "$BASELINE" in *" $pid "*) ;; *) kill "$pid" 2>/dev/null || true ;; esac
+  done
+}
+
+# The voice console hides the agent's logs, so check the pre-call gate here and say why.
+blocked_reason() {
+  .venv/bin/python - "$PORT" <<'PY'
+import json, sys, urllib.request
+api = f"http://localhost:{sys.argv[1]}/api"
+active = json.load(urllib.request.urlopen(f"{api}/config"))["active_lead_id"]
+lead = next(lead for lead in json.load(urllib.request.urlopen(f"{api}/leads")) if lead["id"] == active)
+if not lead["gate"]["allowed"]:
+    print(lead["gate"]["reason"])
+PY
+}
 
 if [ "${1:-}" = "web" ]; then
   cat <<MSG
@@ -55,6 +74,13 @@ cat <<MSG
 MSG
 
 while true; do
+  trap 'echo; exit 0' INT
+  reason="$(blocked_reason)"
+  if [ -n "$reason" ]; then
+    echo "  CALL BLOCKED BEFORE DIALING: $reason"
+    read -r -p "Fix it in the admin, then Enter to try again (Ctrl+C quits). " _
+    continue
+  fi
   trap ':' INT  # Ctrl+C reaches the console and ends the call, not this script
   lk agent console agent.py "$@" || true
   cleanup_jobs

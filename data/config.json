@@ -16,7 +16,7 @@
     "end_call": true
   },
   "compliance": {
-    "enforce_calling_hours": true,
+    "enforce_calling_hours": false,
     "calling_hours_start": 8,
     "calling_hours_end": 21
   },
