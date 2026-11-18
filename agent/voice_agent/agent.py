@@ -211,11 +211,24 @@ async def run_call(ctx: JobContext) -> None:
             state.silence_task.cancel()
             state.silence_task = None
 
+    saved = False
+
+    def _save_record() -> None:
+        nonlocal saved
+        if not saved:
+            saved = True
+            store.save_call(call_record(state, session))
+            logger.info("call %s saved, disposition=%s", state.call_id, state.disposition)
+
     @session.on("close")
     def _on_close(_ev) -> None:
-        store.save_call(call_record(state, session))
-        logger.info("call %s saved, disposition=%s", state.call_id, state.disposition)
+        _save_record()
         ctx.shutdown(reason="session closed")
+
+    async def _on_shutdown() -> None:
+        _save_record()  # also when the call is cut from outside (Ctrl+C, room closed)
+
+    ctx.add_shutdown_callback(_on_shutdown)
 
     await session.start(agent=OutboundLeadAgent(state), room=ctx.room)
 

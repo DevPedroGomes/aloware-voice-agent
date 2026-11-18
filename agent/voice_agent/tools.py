@@ -140,8 +140,8 @@ async def check_availability(context: RunContext[CallState], day: str = "") -> s
     now = state.local_now()
     wanted = _parse_day(day, now.date())
 
+    # The demo calendar is instant. With a real calendar API, the filler covers a slow lookup.
     async with context.with_filler("One sec, I'm pulling up the calendar.", delay=2.5):
-        await asyncio.sleep(0.4)  # stands in for a real calendar API call
         if wanted is not None:
             slots = _slots_for_day(wanted, state, now)[:3]
         else:

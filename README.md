@@ -112,7 +112,9 @@ make demo          # admin at http://localhost:8000 + a call with your mic
 | google/gemini-3.5-flash-lite | 1.10 s | 2.02 s |
 | google/gemini-3.5-flash | 2.03 s | 2.61 s |
 
-I picked GPT-5.4 mini with reasoning off over Gemma 4: almost the same median, a much tighter worst case, and it passes every behavior eval. On a phone call the worst turn is the one people remember. In a full test call, every LLM turn came in between 0.66 and 0.76 s. `agent/scripts/audio_roundtrip.py` checks all four voices by synthesizing the greeting and transcribing it back with the agent's STT.
+I picked GPT-5.4 mini with reasoning off over Gemma 4: almost the same median, a much tighter worst case, and it passes every behavior eval. On a phone call the worst turn is the one people remember. `agent/scripts/audio_roundtrip.py` checks all four voices by synthesizing the greeting and transcribing it back with the agent's STT.
+
+**What a real call measured, honestly.** I'm in Brazil and every model runs in the US, so each turn makes three transatlantic round trips. In a live voice call, the end-to-end reply time (caller stops talking → Maya starts) was **4.4 s p50**: about 0.9 s for the transcript to finalize, 1.1–1.4 s for the LLM's first token, 0.6 s for the first audio, plus playout. Turns with a tool call add a second LLM round. Provider load moves this a lot: the same model's first token measured 0.8 s one night and 2.0 s the next morning, with the same prompt. Each piece is close to its floor for this setup, so the real fixes are architectural (see "What I'd improve"): run the agent next to the models, or move the conversation to speech-to-speech.
 
 **7. The console is for an operator, not a developer.**
 - The operator edits only the campaign script. The phone and compliance rules are appended by the system and shown read-only, so nobody deletes "never quote a price" by accident.
@@ -176,7 +178,7 @@ I had built a LiveKit agent before this project, so the SDK wasn't new to me. Th
 ## What I'd improve with more time
 
 1. **Real telephony.** Outbound through a SIP trunk (Twilio → LiveKit `CreateSIPParticipant`), answering-machine detection so Maya speaks only after a human says hello, a real `WarmTransferTask`, and a recording consent prompt for two-party-consent states.
-2. **Pre-render the greeting while the phone rings.** TTS first audio was 1.2–1.6 s for the full greeting in my measurements, and ring time is free time to hide that.
+2. **Cut latency where it actually goes.** Run the agent in the same region as the models, and try a hybrid: a speech-to-speech model for the conversation, with the scripted greeting and the opt-out check kept deterministic around it (LiveKit's docs list scripted speech as unsupported on realtime models, which is why I didn't start there). Also pre-render the greeting while the phone rings: its first audio took 1.2–1.6 s.
 3. **Audio evals**: simulated calls with phone-quality noise, barge-ins and silence, plus p95 latency per turn tracked across config versions.
 4. **Real integrations**: calendar, CRM timeline notes and dispositions through idempotent webhooks; number capture with digit-by-digit confirmation or a DTMF fallback.
 5. **Platform shape**: draft, publish and rollback per agent in a database, tools exposed per tenant via MCP, and evals as a gate before a version goes live.
