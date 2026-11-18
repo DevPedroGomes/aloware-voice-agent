@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -112,7 +113,7 @@ def build_session(state: CallState) -> AgentSession[CallState]:
         ),
         tts_text_transforms=["filter_markdown", "filter_emoji"],
         max_tool_steps=4,
-        # Silence handling: after 12 s of nobody talking, check in, then hang up.
+        # Silence: after 12 s, "are you still there?", then hang up 10 s later.
         user_away_timeout=12.0,
     )
 
@@ -185,21 +186,30 @@ async def run_call(ctx: JobContext) -> None:
         logger.warning(banner)
         print(f"\n{'=' * 70}\n{banner}\n{'=' * 70}\n", flush=True)
         store.save_call(call_record(state, None, blocked={"code": gate.code, "reason": gate.reason}))
+        await asyncio.sleep(1.5)  # let the console show the reason before the job goes away
         ctx.shutdown(reason=f"blocked:{gate.code}")
         return
 
     session = build_session(state)
 
-    @session.on("user_state_changed")
-    def _on_user_state(ev: UserStateChangedEvent) -> None:
-        if ev.new_state != "away" or state.ending:
-            return
-        state.away_prompts += 1
-        if state.away_prompts == 1:
-            session.say("Hello? Are you still there?", allow_interruptions=True)
-        else:
+    async def _hang_up_if_still_silent() -> None:
+        await asyncio.sleep(10)
+        if session.user_state == "away" and not state.ending:
             state.crm_note = "Lead went silent mid-call."
             hang_up(session, state, "Sounds like I lost you. I'll try you another time. Bye for now.", "no_response")
+
+    @session.on("user_state_changed")
+    def _on_user_state(ev: UserStateChangedEvent) -> None:
+        # The SDK fires "away" once per silence, so the hang-up is our own timer,
+        # cancelled as soon as the caller speaks again.
+        if state.ending:
+            return
+        if ev.new_state == "away":
+            session.say("Hello? Are you still there?", allow_interruptions=True)
+            state.silence_task = asyncio.create_task(_hang_up_if_still_silent())
+        elif state.silence_task is not None:
+            state.silence_task.cancel()
+            state.silence_task = None
 
     @session.on("close")
     def _on_close(_ev) -> None:

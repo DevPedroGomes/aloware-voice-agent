@@ -24,7 +24,7 @@ def spoken_phone(e164: str) -> str:
 
 
 def spoken_slot(dt: datetime, now: datetime) -> str:
-    """'tomorrow at ten thirty AM' / 'Thursday at two PM' in the lead's time zone."""
+    """'tomorrow at 10:30 AM' / 'Thursday at 2 PM', in the lead's time zone. TTS reads these naturally."""
     days = (dt.date() - now.date()).days
     if days == 0:
         day = "today"

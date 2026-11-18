@@ -3,9 +3,9 @@
 Design choices worth calling out:
 - Tools return pre-spoken strings ("tomorrow at 10:30 AM", phone numbers as digit groups)
   so the model never has to reformat machine data for speech.
-- `book_appointment` refuses to run unless the model asserts it read the time and
-  number back and got a yes. The guardrail lives in the tool, where it can't be
-  talked around, and the ToolError tells the model what to do instead.
+- `book_appointment` makes the read-back structural: the first call for a slot never
+  books, it hands the model the line to read back. Only a later call, after the caller
+  has answered, writes the booking. The model can't skip the step by being confident.
 - Every tool that ends the call speaks its own goodbye and returns None. A None output
   means no second LLM round-trip after the tool, which on a call is 1-2 s of dead air
   before the goodbye.
@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Literal
@@ -53,15 +52,17 @@ class CallState:
     crm_note: str | None = None
     offered_slots: dict[str, str] = field(default_factory=dict)
     appointment: dict | None = None
+    # (slot_id, callback number) read back to the caller, and how many user turns existed then
+    readback: tuple[tuple[str, str], int] | None = None
     transfer: dict | None = None
-    away_prompts: int = 0
+    silence_task: asyncio.Task | None = None
     ending: bool = False
     background: BackgroundAudioPlayer | None = None
     tasks: set[asyncio.Task] = field(default_factory=set)
 
     @property
     def tz(self) -> ZoneInfo:
-        return ZoneInfo(self.lead.get("timezone") or "America/New_York")
+        return store.lead_tz(self.lead)
 
     def local_now(self) -> datetime:
         return datetime.now(tz=self.tz)
@@ -97,6 +98,8 @@ def _parse_day(text: str, today: date) -> date | None:
         return None
     if "today" in t:
         return today
+    if "day after tomorrow" in t:
+        return today + timedelta(days=2)
     if "tomorrow" in t:
         return today + timedelta(days=1)
     try:
@@ -160,29 +163,34 @@ async def check_availability(context: RunContext[CallState], day: str = "") -> s
     return "Open slots in the lead's local time (offer at most two out loud):\n" + "\n".join(lines)
 
 
+def _user_turns(context: RunContext) -> int:
+    return sum(1 for item in context.session.history.items if item.type == "message" and item.role == "user")
+
+
 @function_tool()
 async def book_appointment(
     context: RunContext[CallState],
     slot_id: str,
-    time_and_number_confirmed: bool,
     notes: str,
     callback_number: str = "",
 ) -> str:
-    """Book a call with a licensed agent.
+    """Book a call with a licensed agent. Call it as soon as the caller picks a time.
 
-    Only call this AFTER you read the day, time and callback number back to the caller
-    and they said yes.
+    The first call for a slot does not book: it returns the read-back line to say. Call
+    it again with the same slot after the caller confirms, and that call books.
 
     Args:
         slot_id: The slot_id returned by check_availability.
-        time_and_number_confirmed: True only if the caller explicitly confirmed the
-            read-back of the time and the callback number.
         notes: Qualification answers for the licensed agent (homeowner, roof age,
             current carrier, renewal date, anything else useful).
-        callback_number: Only if the caller gave a different number than the one on file.
+        callback_number: Digits only (e.g. 5125550142), and only if the caller gave a
+            different number than the one on file. Leave empty otherwise.
     """
     state = context.userdata
-    number = callback_number.strip() or state.lead["phone"]
+    digits = "".join(c for c in callback_number if c.isdigit())
+    if callback_number.strip() and len(digits) < 10:
+        raise ToolError("callback_number must be digits like 5125550142, or empty for the number on file.")
+    number = digits or state.lead["phone"]
     spoken_number = spoken_phone(number)
 
     slot_label = state.offered_slots.get(slot_id)
@@ -190,21 +198,26 @@ async def book_appointment(
         try:
             dt = datetime.fromisoformat(slot_id)
         except ValueError:
-            raise ToolError("Unknown slot_id. Call check_availability and use one of the slot_ids it returns.")
+            raise ToolError("Unknown slot_id. Call check_availability and use one of its slot_ids.") from None
         now = state.local_now()
-        local = dt.astimezone(state.tz)
-        if local <= now or local.weekday() >= 5 or not (9 <= local.hour < 17):
-            raise ToolError("That time isn't bookable. Agents take calls weekdays 9 AM to 5 PM, lead's local time.")
+        # A slot without an offset means the lead's local time, never the server's.
+        local = dt.replace(tzinfo=state.tz) if dt.tzinfo is None else dt.astimezone(state.tz)
+        if local <= now or local.weekday() >= 5 or (local.hour, local.minute) not in SLOT_TIMES:
+            raise ToolError("That time isn't bookable. Call check_availability and offer one of its slots.")
+        slot_id = local.isoformat()
         slot_label = spoken_slot(local, now)
 
-    if not time_and_number_confirmed:
-        raise ToolError(
-            f"Not booked yet. Read back '{slot_label}' and the callback number "
-            f"'{spoken_number}', wait for a clear yes, then call book_appointment again "
-            "with time_and_number_confirmed=true."
-        )
     if slot_id in store.booked_slot_ids():
         raise ToolError("That slot was just taken. Apologize and offer another time.")
+
+    key, turns = (slot_id, spoken_number), _user_turns(context)
+    if state.readback is None or state.readback[0] != key or turns <= state.readback[1]:
+        state.readback = (key, turns)
+        return (
+            f"NOT booked yet. Read this back and ask if it's right: '{slot_label}, and the agent "
+            f"will call you at {spoken_number}.' If they confirm, call book_appointment again "
+            "with the same slot_id. If they change the time or number, use the new details."
+        )
 
     context.disallow_interruptions()  # don't let a cough cancel a half-written booking
     appt = {
@@ -229,8 +242,8 @@ async def book_appointment(
 
 @function_tool()
 async def transfer_to_licensed_agent(context: RunContext[CallState], reason: str, whisper_summary: str) -> None:
-    """Warm-transfer the caller to a licensed agent right now. Use when they want a
-    price, coverage advice, or to talk to a person, and they agreed to be transferred.
+    """Warm-transfer the caller to a licensed agent right now. Only after the caller said
+    yes to being connected now (ask first; never transfer just because qualifying is done).
 
     Args:
         reason: Why the caller is being transferred, in a few words.

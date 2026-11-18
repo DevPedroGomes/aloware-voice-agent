@@ -2,8 +2,8 @@
 
 The admin UI edits `data/config.json`. The agent re-reads it at the start of every
 call, so a saved change applies to the next conversation without a restart. Every save
-bumps `version` and keeps a snapshot, and each call record stores the version it ran
-with, so "which prompt was live when this call went wrong?" has an answer.
+bumps `version`, and each call record stores the version it ran with, so "which prompt
+was live when this call went wrong?" has an answer.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ TOOL_CATALOG: dict[str, dict[str, Any]] = {
     },
     "book_appointment": {
         "label": "Book a call with a licensed agent",
-        "description": "Books a slot. Refuses unless the time and callback number were read back and confirmed.",
+        "description": "Books an offered slot, only after reading the time and callback number back to the caller.",
         "locked": False,
     },
     "transfer_to_licensed_agent": {
@@ -67,17 +67,6 @@ TOOL_CATALOG: dict[str, dict[str, Any]] = {
         "locked": True,
     },
 }
-
-DISPOSITIONS = [
-    "booked",
-    "transferred",
-    "not_interested",
-    "call_back_later",
-    "wrong_person",
-    "dnc",
-    "no_response",
-    "other",
-]
 
 TEMPLATE_VARS = {
     "first_name": "Lead's first name (may be empty)",
@@ -163,6 +152,8 @@ def validate(cfg: dict) -> list[str]:
     for name, meta in TOOL_CATALOG.items():
         if meta["locked"] and not tools.get(name, False):
             errors.append(f"'{meta['label']}' is a compliance tool and cannot be disabled.")
+    if tools.get("book_appointment") and not tools.get("check_availability"):
+        errors.append("Booking needs 'Check licensed-agent availability' turned on: it only books offered slots.")
 
     comp = cfg.get("compliance", {})
     start, end = comp.get("calling_hours_start", 8), comp.get("calling_hours_end", 21)
@@ -191,38 +182,11 @@ def save(new_cfg: dict) -> dict:
     errors = validate(new_cfg)
     if errors:
         raise ValueError(errors)
-    current = load()
     cfg = copy.deepcopy(new_cfg)
-    cfg["version"] = int(current.get("version", 0)) + 1
+    cfg["version"] = int(load().get("version", 0)) + 1
     cfg["updated_at"] = store.now_iso()
-    _snapshot(current)
     store.write_json(store.CONFIG_PATH, cfg)
-    _snapshot(cfg)
     return cfg
-
-
-def _snapshot(cfg: dict) -> None:
-    path = store.VERSIONS_DIR / f"v{cfg['version']}.json"
-    if not path.exists():
-        store.write_json(path, cfg)
-
-
-def list_versions() -> list[dict]:
-    if not store.VERSIONS_DIR.exists():
-        return []
-    out = []
-    for p in store.VERSIONS_DIR.glob("v*.json"):
-        c = store.read_json(p, {})
-        out.append({"version": c.get("version"), "updated_at": c.get("updated_at")})
-    return sorted(out, key=lambda v: v["version"] or 0, reverse=True)
-
-
-def rollback(version: int) -> dict:
-    """Rolling back publishes the old content as a NEW version, so history only grows."""
-    old = store.read_json(store.VERSIONS_DIR / f"v{version}.json", None)
-    if old is None:
-        raise KeyError(version)
-    return save(old)
 
 
 def enabled_tools(cfg: dict) -> list[str]:

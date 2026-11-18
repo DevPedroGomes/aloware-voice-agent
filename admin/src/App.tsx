@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, CallDetail, CallSummary, Catalog, Config, EvalRun, Lead } from "./api";
+import { api, CallDetail, CallSummary, Catalog, Config, Lead } from "./api";
 
-type Tab = "agent" | "calls" | "evals" | "compliance";
+type Tab = "agent" | "calls" | "compliance";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("agent");
@@ -38,9 +38,9 @@ export default function App() {
         </span>
       </header>
       <nav>
-        {(["agent", "calls", "evals", "compliance"] as Tab[]).map((t) => (
+        {(["agent", "calls", "compliance"] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
-            {t === "agent" ? "Agent config" : t === "calls" ? "Calls" : t === "evals" ? "Evals" : "Leads & DNC"}
+            {t === "agent" ? "Agent config" : t === "calls" ? "Calls" : "Leads & DNC"}
           </button>
         ))}
       </nav>
@@ -59,7 +59,6 @@ export default function App() {
         />
       )}
       {tab === "calls" && <CallsTab />}
-      {tab === "evals" && <EvalsTab currentVersion={saved.version} />}
       {tab === "compliance" && <ComplianceTab leads={leads} refreshLeads={async () => setLeads(await api.leads())} />}
     </div>
   );
@@ -79,7 +78,6 @@ function AgentTab(props: {
   const [errors, setErrors] = useState<string[]>([]);
   const [notice, setNotice] = useState<string>("");
   const [preview, setPreview] = useState<{ text: string; has_ai_disclosure: boolean } | null>(null);
-  const [versions, setVersions] = useState<{ version: number; updated_at: string }[]>([]);
   const [showRules, setShowRules] = useState(false);
   const dirty = useMemo(() => JSON.stringify(saved) !== JSON.stringify(draft), [saved, draft]);
 
@@ -97,10 +95,6 @@ function AgentTab(props: {
     return () => clearTimeout(t);
   }, [draft.greeting, draft.persona, draft.active_lead_id]);
 
-  useEffect(() => {
-    api.versions().then(setVersions);
-  }, [saved.version]);
-
   const save = async () => {
     try {
       const cfg = await api.saveConfig(draft);
@@ -110,12 +104,6 @@ function AgentTab(props: {
     } catch (e: any) {
       setErrors(e?.detail?.errors ?? [JSON.stringify(e)]);
     }
-  };
-
-  const rollback = async (v: number) => {
-    const cfg = await api.rollback(v);
-    setNotice(`Rolled back: v${v} re-published as v${cfg.version}.`);
-    props.onSaved(cfg);
   };
 
   const activeLead = leads.find((l) => l.id === draft.active_lead_id);
@@ -243,18 +231,6 @@ function AgentTab(props: {
           </div>
         </section>
 
-        <section>
-          <h2>Model</h2>
-          <label>
-            LLM (LiveKit Inference)
-            <select value={draft.models.llm} onChange={(e) => update((c) => (c.models.llm = e.target.value))}>
-              {["openai/gpt-5.4-mini", "google/gemini-3.5-flash", "google/gemma-4-31b-it", "openai/gpt-5.4"].map((m) => (
-                <option key={m}>{m}</option>
-              ))}
-            </select>
-          </label>
-        </section>
-
         <section className="savebar">
           {errors.length > 0 && (
             <ul className="errors">
@@ -272,28 +248,6 @@ function AgentTab(props: {
           </div>
         </section>
 
-        <section>
-          <h2>Versions</h2>
-          <table>
-            <tbody>
-              {versions.map((v) => (
-                <tr key={v.version}>
-                  <td>v{v.version}</td>
-                  <td className="muted">{fmt(v.updated_at)}</td>
-                  <td>
-                    {v.version === saved.version ? (
-                      <span className="badge small">live</span>
-                    ) : (
-                      <button className="link" onClick={() => rollback(v.version)}>
-                        roll back
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
       </div>
     </div>
   );
@@ -414,83 +368,15 @@ function CallsTab() {
   );
 }
 
-// ---------------------------------------------------------------- evals
-
-function EvalsTab({ currentVersion }: { currentVersion: number }) {
-  const [state, setState] = useState<{ running: boolean; latest: EvalRun | null }>({ running: false, latest: null });
-
-  useEffect(() => {
-    const load = () => api.evals().then(setState);
-    load();
-    const t = setInterval(load, 3000);
-    return () => clearInterval(t);
-  }, []);
-
-  const latest = state.latest;
-  const stale = latest && latest.config_version !== currentVersion;
-
-  return (
-    <section>
-      <h2>Evals</h2>
-      <p className="hint">
-        Runs the test suite against the config that is live right now (v{currentVersion}): deterministic compliance checks plus short
-        text-mode calls against the real model. Run it after every prompt or tool change.
-      </p>
-      <button className="primary" disabled={state.running} onClick={() => api.runEvals().then(() => setState({ ...state, running: true }))}>
-        {state.running ? "Running… (about a minute)" : `Run evals on v${currentVersion}`}
-      </button>
-      {stale && <div className="preview warn">The last run was on v{latest!.config_version}. The config changed since then.</div>}
-      {latest && (
-        <>
-          <p>
-            <strong className="pass">{latest.passed} passed</strong> · <strong className="fail">{latest.failed} failed</strong> ·{" "}
-            {latest.skipped} skipped · config v{latest.config_version} · {fmt(latest.finished_at)}
-          </p>
-          <table>
-            <tbody>
-              {latest.cases.map((c) => (
-                <tr key={c.file + c.name}>
-                  <td>
-                    <span className={c.status === "passed" ? "pass" : c.status === "failed" ? "fail" : "muted"}>{c.status}</span>
-                  </td>
-                  <td>
-                    <code>{c.name}</code>
-                    {c.message && <div className="fail small">{c.message.slice(0, 300)}</div>}
-                  </td>
-                  <td className="muted">{c.file}</td>
-                  <td className="muted">{c.seconds.toFixed(1)}s</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
-      )}
-    </section>
-  );
-}
-
 // ---------------------------------------------------------------- leads & DNC
 
 function ComplianceTab({ leads, refreshLeads }: { leads: Lead[]; refreshLeads: () => void }) {
   const [dnc, setDnc] = useState<Awaited<ReturnType<typeof api.dnc>>>([]);
-  const [appts, setAppts] = useState<Awaited<ReturnType<typeof api.appointments>>>([]);
   const load = () => {
     api.dnc().then(setDnc);
-    api.appointments().then(setAppts);
     refreshLeads();
   };
   useEffect(load, []);
-
-  const remove = async (phone: string) => {
-    const reason = window.prompt("Why is this number being removed from Do Not Call? (audited, 10+ characters)");
-    if (!reason) return;
-    try {
-      await api.dncRemove(phone, reason);
-      load();
-    } catch (e: any) {
-      alert(e?.detail ?? "Failed");
-    }
-  };
 
   return (
     <div className="grid">
@@ -521,21 +407,11 @@ function ComplianceTab({ leads, refreshLeads }: { leads: Lead[]; refreshLeads: (
             </tbody>
           </table>
         </section>
-        <section>
-          <h2>Booked appointments</h2>
-          {appts.length === 0 && <p className="muted">None yet.</p>}
-          {appts.map((a, i) => (
-            <p key={i}>
-              <strong>{a.spoken}</strong> · {a.lead_id}
-              <br />
-              <span className="muted small">{a.notes}</span>
-            </p>
-          ))}
-        </section>
       </div>
       <div className="col">
         <section>
           <h2>Do Not Call list</h2>
+          <p className="hint">Numbers land here when a caller opts out, and the pre-call gate blocks every later call to them.</p>
           {dnc.length === 0 && <p className="muted">Empty.</p>}
           <table>
             <tbody>
@@ -544,11 +420,6 @@ function ComplianceTab({ leads, refreshLeads }: { leads: Lead[]; refreshLeads: (
                   <td>{d.phone}</td>
                   <td className="small">
                     “{d.reason}”<div className="muted">via {d.source}</div>
-                  </td>
-                  <td>
-                    <button className="link" onClick={() => remove(d.phone)}>
-                      remove…
-                    </button>
                   </td>
                 </tr>
               ))}

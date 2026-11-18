@@ -42,7 +42,7 @@ def precall_gate(lead: dict, cfg: dict, now: datetime | None = None) -> GateResu
 
     comp = cfg.get("compliance", {})
     if comp.get("enforce_calling_hours", True):
-        tz = ZoneInfo(lead.get("timezone") or "America/New_York")
+        tz = store.lead_tz(lead)
         local = (now or datetime.now(tz=ZoneInfo("UTC"))).astimezone(tz)
         start, end = comp.get("calling_hours_start", 8), comp.get("calling_hours_end", 21)
         if not (start <= local.hour < end):
@@ -56,16 +56,18 @@ def precall_gate(lead: dict, cfg: dict, now: datetime | None = None) -> GateResu
     return GateResult(True)
 
 
-# Phrases checked against the final STT transcript. The odd spellings are real STT
-# errors for "stop calling", "take me off" and "do not call".
+# Phrases checked against the final STT transcript. Each one needs calling/contact/list
+# context, because a false positive is expensive: "can we do a quick call tomorrow?" must
+# not put a hot lead on the DNC list. The odd spellings are common STT errors.
 _OPT_OUT_PATTERNS = [
-    r"\b(stop|quit|quick)\s+(calling|call|colin|collin|cooling|calling me|call me)\b",
-    r"\bdo\s*n[o']?t\s+call\s+(me\s+)?(again|anymore|any more|ever)\b",
-    r"\bdon'?t\s+(ever\s+)?(call|contact|phone)\s+(me|this number)\s+(again|anymore|any more|ever)\b",
-    r"\bnever\s+(call|contact)\s+(me|this number)\s+again\b",
-    r"\b(take|remove|get|delete)\s+(me|my\s+(number|name|info\w*|phone))\s+(off|of|from)\b",
+    r"\b(stop|quit)\s+(calling|colin|collin|cooling|call(ing)?\s+me)\b",
+    r"\b(don'?t|do\s*not|never)\s+(ever\s+)?(call|contact|phone)\s+(me|this number)\s+(again|anymore|any more|ever)\b",
+    r"\b(take|remove|delete|get)\s+(me|my\s+(number|name|info\w*|phone(\s+number)?))\s+(off|of|from)\s+"
+    r"(your|the|this)\s+(call(ing)?\s+)?(list|database|system|records)\b",
     r"\b(put|add)\s+(me|my number)\s+(on|to)\s+(your|the)\s+do\s*not\s*call\b",
-    r"\b(unsubscribe|opt\s*me\s*out|opt\s*out)\b",
+    r"\bopt\s*(me\s*)?out\b(?!\s+of\b)",
+    r"\bopt\s*(me\s*)?out\s+of\s+(these|your|the|this)\s+(calls|call list|list)\b",
+    r"\bunsubscribe\b",
     r"\blose\s+(my|this)\s+number\b",
 ]
 _OPT_OUT_RE = re.compile("|".join(_OPT_OUT_PATTERNS), re.IGNORECASE)

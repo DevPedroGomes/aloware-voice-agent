@@ -10,10 +10,10 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.environ.get("VOICE_AGENT_DATA_DIR", REPO_ROOT / "data"))
@@ -24,10 +24,6 @@ LEADS_PATH = DATA_DIR / "leads.json"
 DNC_PATH = RUNTIME_DIR / "dnc.json"
 APPOINTMENTS_PATH = RUNTIME_DIR / "appointments.json"
 CALLS_DIR = RUNTIME_DIR / "calls"
-VERSIONS_DIR = RUNTIME_DIR / "config_versions"
-EVALS_DIR = RUNTIME_DIR / "evals"
-
-_lock = threading.Lock()
 
 
 def now_iso() -> str:
@@ -42,7 +38,7 @@ def read_json(path: Path, default: Any) -> Any:
 
 
 def write_json(path: Path, data: Any) -> None:
-    """Atomic write: the agent and the admin API can touch the same files."""
+    """Atomic write, so the admin API never reads a half-written file from the agent."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False, suffix=".tmp") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -60,6 +56,10 @@ def get_lead(lead_id: str) -> dict | None:
     return next((lead for lead in list_leads() if lead["id"] == lead_id), None)
 
 
+def lead_tz(lead: dict) -> ZoneInfo:
+    return ZoneInfo(lead.get("timezone") or "America/New_York")
+
+
 # ---------- do-not-call list ----------
 
 def list_dnc() -> list[dict]:
@@ -71,28 +71,11 @@ def is_on_dnc(phone: str) -> bool:
 
 
 def add_to_dnc(phone: str, *, reason: str, source: str, call_id: str | None = None) -> None:
-    with _lock:
-        entries = list_dnc()
-        if any(e["phone"] == phone for e in entries):
-            return
-        entries.append(
-            {"phone": phone, "reason": reason, "source": source, "call_id": call_id, "added_at": now_iso()}
-        )
-        write_json(DNC_PATH, entries)
-
-
-def remove_from_dnc(phone: str, *, reason: str) -> bool:
-    """Removing a number is an audited admin action, never something the agent can do."""
-    with _lock:
-        entries = list_dnc()
-        kept = [e for e in entries if e["phone"] != phone]
-        if len(kept) == len(entries):
-            return False
-        write_json(DNC_PATH, kept)
-        audit = read_json(RUNTIME_DIR / "dnc_audit.json", [])
-        audit.append({"phone": phone, "action": "removed", "reason": reason, "at": now_iso()})
-        write_json(RUNTIME_DIR / "dnc_audit.json", audit)
-        return True
+    entries = list_dnc()
+    if any(e["phone"] == phone for e in entries):
+        return
+    entries.append({"phone": phone, "reason": reason, "source": source, "call_id": call_id, "added_at": now_iso()})
+    write_json(DNC_PATH, entries)
 
 
 # ---------- appointments ----------
@@ -106,10 +89,7 @@ def booked_slot_ids() -> set[str]:
 
 
 def add_appointment(appt: dict) -> None:
-    with _lock:
-        appts = list_appointments()
-        appts.append(appt)
-        write_json(APPOINTMENTS_PATH, appts)
+    write_json(APPOINTMENTS_PATH, [*list_appointments(), appt])
 
 
 # ---------- call records ----------
